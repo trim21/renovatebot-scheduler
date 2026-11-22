@@ -163,9 +163,12 @@ func configArchive(content []byte) ([]byte, error) {
 func hostConfig(mounts []Mount) *container.HostConfig {
 	return &container.HostConfig{
 		Mounts: toDockerMounts(mounts),
-		// Logs are read back through the API, so the daemon does not need to
-		// keep a second copy in its own log driver.
-		LogConfig: container.LogConfig{Type: "none"},
+		// ContainerLogs reads whatever the logging driver stored, so the driver
+		// has to be one that supports reading. "none" stores nothing and fails
+		// the read; pinning json-file keeps the run log working regardless of
+		// the daemon default. The container is removed right after the run, so
+		// the daemon copy does not accumulate.
+		LogConfig: container.LogConfig{Type: "json-file"},
 	}
 }
 
