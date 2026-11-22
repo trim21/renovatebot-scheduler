@@ -54,6 +54,16 @@ services:
       RENOVATE_MOUNTS: renovate-cache:/tmp/renovate/cache
       RENOVATE_LOG_LEVEL: info
 
+      # Optional global Renovate config, supports any format Renovate itself
+      # accepts. Use either inline JSON:
+      # RENOVATE_CONFIG: |
+      #   {
+      #     "extends": ["config:recommended"],
+      #     "labels": ["dependencies"]
+      #   }
+      # or a file readable by this container:
+      # RENOVATE_CONFIG_FILE: /data/renovate-config.json
+
       # Other scheduler tuning, defaults shown.
       # DEBOUNCE: 20s
       # RUN_TIMEOUT: 30m

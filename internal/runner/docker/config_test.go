@@ -1,6 +1,11 @@
 package docker
 
-import "testing"
+import (
+	"archive/tar"
+	"bytes"
+	"io"
+	"testing"
+)
 
 func TestParseMounts(t *testing.T) {
 	mounts, err := ParseMounts("")
@@ -44,6 +49,34 @@ func TestParseMounts(t *testing.T) {
 		if _, err := ParseMounts(raw); err == nil {
 			t.Fatalf("expected an error for %q", raw)
 		}
+	}
+}
+
+func TestConfigArchive(t *testing.T) {
+	content := []byte(`{"extends":["config:recommended"]}`)
+	archive, err := configArchive(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader := tar.NewReader(bytes.NewReader(archive))
+	header, err := reader.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Name != "renovate-config.json" {
+		t.Fatalf("unexpected entry name: %q", header.Name)
+	}
+	if header.Mode != 0o600 {
+		t.Fatalf("unexpected mode: %o", header.Mode)
+	}
+
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("unexpected content: %q", got)
 	}
 }
 

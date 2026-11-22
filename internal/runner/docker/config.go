@@ -44,6 +44,9 @@ type Config struct {
 	Endpoint   string
 	Token      string
 	LogLevel   string
+	// ExtraConfig is written into the container and referenced through
+	// RENOVATE_CONFIG_FILE.
+	ExtraConfig []byte
 }
 
 // FromEnv reads the Docker-specific environment variables.

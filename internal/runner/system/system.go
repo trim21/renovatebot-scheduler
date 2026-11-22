@@ -25,6 +25,9 @@ type Config struct {
 	Endpoint string
 	Token    string
 	LogLevel string
+	// ExtraConfig is written to a temporary file and referenced through
+	// RENOVATE_CONFIG_FILE.
+	ExtraConfig []byte
 }
 
 func FromEnv() Config {
@@ -45,13 +48,24 @@ func New(cfg Config) *SystemRunner {
 func (r *SystemRunner) Run(ctx context.Context, req runner.RunRequest, log io.Writer) runner.RunResult {
 	_, _ = fmt.Fprintf(log, "# command: %s %s\n", r.cfg.Bin, req.Repo)
 
+	overrides := map[string]string{
+		"RENOVATE_PLATFORM": "forgejo",
+		"RENOVATE_ENDPOINT": r.cfg.Endpoint,
+		"RENOVATE_TOKEN":    r.cfg.Token,
+		"LOG_LEVEL":         r.cfg.LogLevel,
+	}
+
+	if len(r.cfg.ExtraConfig) > 0 {
+		path, cleanup, err := writeTempConfig(r.cfg.ExtraConfig)
+		if err != nil {
+			return runner.RunResult{ExitCode: -1, Err: err}
+		}
+		defer cleanup()
+		overrides["RENOVATE_CONFIG_FILE"] = path
+	}
+
 	cmd := exec.CommandContext(ctx, r.cfg.Bin, req.Repo)
-	cmd.Env = append(os.Environ(),
-		"RENOVATE_PLATFORM=forgejo",
-		"RENOVATE_ENDPOINT="+r.cfg.Endpoint,
-		"RENOVATE_TOKEN="+r.cfg.Token,
-		"LOG_LEVEL="+r.cfg.LogLevel,
-	)
+	cmd.Env = buildEnv(overrides)
 	cmd.Stdout = log
 	cmd.Stderr = log
 
@@ -87,4 +101,41 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// buildEnv returns the scheduler environment with overrides applied. Keys are
+// dropped from the inherited environment first so the child never sees the
+// same variable twice.
+func buildEnv(overrides map[string]string) []string {
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, ok := overrides[key]; ok {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func writeTempConfig(content []byte) (string, func(), error) {
+	file, err := os.CreateTemp("", "renovate-config-*.json")
+	if err != nil {
+		return "", nil, fmt.Errorf("create renovate config: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(file.Name()) }
+
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("write renovate config: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("write renovate config: %w", err)
+	}
+	return file.Name(), cleanup, nil
 }

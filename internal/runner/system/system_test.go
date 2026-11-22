@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,58 @@ exit 3
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("log does not contain %q:\n%s", want, log.String())
 		}
+	}
+}
+
+func TestRunPassesExtraConfig(t *testing.T) {
+	script := writeScript(t, `echo "config=$RENOVATE_CONFIG_FILE"
+cat "$RENOVATE_CONFIG_FILE"
+`)
+
+	config := []byte(`{"extends":["config:recommended"]}`)
+	r := New(Config{Bin: script, ExtraConfig: config})
+
+	var log bytes.Buffer
+	result := r.Run(context.Background(), runner.RunRequest{Repo: "owner/repo"}, &log)
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+
+	output := log.String()
+	if !strings.Contains(output, string(config)) {
+		t.Fatalf("log does not contain the config:\n%s", output)
+	}
+
+	// The temporary file must be gone once the run finished.
+	for _, line := range strings.Split(output, "\n") {
+		if path, ok := strings.CutPrefix(line, "config="); ok && path != "" {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("temporary config %s was not removed: %v", path, err)
+			}
+		}
+	}
+}
+
+func TestBuildEnvDropsOverriddenKeys(t *testing.T) {
+	t.Setenv("RENOVATE_TOKEN", "inherited")
+	t.Setenv("KEEP_ME", "yes")
+
+	env := buildEnv(map[string]string{"RENOVATE_TOKEN": "injected"})
+
+	var tokens int
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "RENOVATE_TOKEN=") {
+			tokens++
+			if entry != "RENOVATE_TOKEN=injected" {
+				t.Fatalf("unexpected token entry: %q", entry)
+			}
+		}
+	}
+	if tokens != 1 {
+		t.Fatalf("expected exactly one RENOVATE_TOKEN entry, got %d", tokens)
+	}
+	if !slices.Contains(env, "KEEP_ME=yes") {
+		t.Fatal("unrelated environment variables were dropped")
 	}
 }
 

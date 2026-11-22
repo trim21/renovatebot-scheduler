@@ -114,6 +114,11 @@ func (e *executor) Run(ctx context.Context, req runner.RunRequest) runner.RunRes
 
 // NewRunner builds the execution backend selected by RUNNER.
 func NewRunner(cfg *Config, store *Store) (Executor, error) {
+	extraConfig, err := runner.LoadExtraConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	switch cfg.Runner {
 	case runner.KindDocker:
 		dockerCfg, err := docker.FromEnv()
@@ -122,6 +127,7 @@ func NewRunner(cfg *Config, store *Store) (Executor, error) {
 		}
 		dockerCfg.Endpoint = cfg.ForgejoURL
 		dockerCfg.Token = cfg.RenovateToken
+		dockerCfg.ExtraConfig = extraConfig
 
 		backend, err := docker.New(dockerCfg)
 		if err != nil {
@@ -132,6 +138,7 @@ func NewRunner(cfg *Config, store *Store) (Executor, error) {
 		systemCfg := system.FromEnv()
 		systemCfg.Endpoint = cfg.ForgejoURL
 		systemCfg.Token = cfg.RenovateToken
+		systemCfg.ExtraConfig = extraConfig
 		return &executor{backend: system.New(systemCfg), store: store, timeout: cfg.RunTimeout}, nil
 	default:
 		return nil, fmt.Errorf("unsupported RUNNER %q, supported values: %q, %q",

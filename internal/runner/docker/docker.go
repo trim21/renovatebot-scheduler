@@ -1,11 +1,14 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -16,6 +19,9 @@ import (
 
 	"github.com/trim21/renovatebot-scheduler/internal/runner"
 )
+
+// containerConfigPath is where ExtraConfig is written inside the container.
+const containerConfigPath = "/tmp/renovate-config.json"
 
 // Runner runs every Renovate invocation in its own container through the
 // Docker Engine API. The scheduler itself is expected to run in a container
@@ -57,11 +63,18 @@ func (r *Runner) Run(ctx context.Context, req runner.RunRequest, log io.Writer) 
 		return runner.RunResult{ExitCode: -1, Err: fmt.Errorf("create container: %w", err)}
 	}
 
+	if len(r.cfg.ExtraConfig) > 0 {
+		if err := r.copyConfig(ctx, created.ID); err != nil {
+			r.remove(created.ID, log)
+			return runner.RunResult{ExitCode: -1, Err: err}
+		}
+		_, _ = fmt.Fprintf(log, "# renovate config: %d bytes\n", len(r.cfg.ExtraConfig))
+	}
+
 	if _, err := r.client.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		r.remove(created.ID, log)
 		return runner.RunResult{ExitCode: -1, Err: fmt.Errorf("start container: %w", err)}
 	}
-
 	exitCode := -1
 	wait := r.client.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{
 		Condition: container.WaitConditionNotRunning,
@@ -86,20 +99,65 @@ func (r *Runner) Run(ctx context.Context, req runner.RunRequest, log io.Writer) 
 }
 
 func containerConfig(cfg Config, req runner.RunRequest) *container.Config {
+	env := []string{
+		"RENOVATE_PLATFORM=forgejo",
+		"RENOVATE_ENDPOINT=" + cfg.Endpoint,
+		"RENOVATE_TOKEN=" + cfg.Token,
+		"LOG_LEVEL=" + cfg.LogLevel,
+	}
+	if len(cfg.ExtraConfig) > 0 {
+		env = append(env, "RENOVATE_CONFIG_FILE="+containerConfigPath)
+	}
+
 	return &container.Config{
 		Image: cfg.Image,
 		Cmd:   []string{req.Repo},
-		Env: []string{
-			"RENOVATE_PLATFORM=forgejo",
-			"RENOVATE_ENDPOINT=" + cfg.Endpoint,
-			"RENOVATE_TOKEN=" + cfg.Token,
-			"LOG_LEVEL=" + cfg.LogLevel,
-		},
+		Env:   env,
 		Labels: map[string]string{
 			"renovate-scheduler.repo": req.Repo,
 			"renovate-scheduler.run":  req.RunID,
 		},
 	}
+}
+
+// copyConfig writes ExtraConfig into the created container. The file has to
+// exist before start, so the config travels with the container instead of
+// requiring a host path that the scheduler container may not share.
+func (r *Runner) copyConfig(ctx context.Context, containerID string) error {
+	archive, err := configArchive(r.cfg.ExtraConfig)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.client.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: path.Dir(containerConfigPath),
+		Content:         bytes.NewReader(archive),
+	})
+	if err != nil {
+		return fmt.Errorf("copy renovate config into container: %w", err)
+	}
+	return nil
+}
+
+func configArchive(content []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+
+	header := &tar.Header{
+		Name: path.Base(containerConfigPath),
+		Mode: 0o600,
+		Size: int64(len(content)),
+	}
+	if err := writer.WriteHeader(header); err != nil {
+		return nil, fmt.Errorf("build config archive: %w", err)
+	}
+	if _, err := writer.Write(content); err != nil {
+		return nil, fmt.Errorf("build config archive: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("build config archive: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func hostConfig(mounts []Mount) *container.HostConfig {
