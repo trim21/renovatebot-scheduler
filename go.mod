@@ -61,7 +61,7 @@ require (
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.53.0 // indirect
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
