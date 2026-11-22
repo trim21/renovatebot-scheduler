@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,10 @@ import (
 // containerConfigPath is where ExtraConfig is written inside the container.
 const containerConfigPath = "/tmp/renovate-config.json"
 
+// defaultOwner is used when the image declares a USER that cannot be read as a
+// numeric uid, which is the common case for distribution images.
+const defaultOwner = "1000:1000"
+
 // Runner runs every Renovate invocation in its own container through the
 // Docker Engine API. The scheduler itself is expected to run in a container
 // with the Docker socket mounted.
@@ -33,6 +38,9 @@ type Runner struct {
 
 	permMu   sync.Mutex
 	permDone map[string]bool
+
+	ownerMu sync.Mutex
+	owner   string
 }
 
 func New(cfg Config) (*Runner, error) {
@@ -244,7 +252,10 @@ func (r *Runner) mountOwnershipFixed(source string) bool {
 // user. It reuses the Renovate image so no extra image has to be pulled, and
 // runs without networking.
 func (r *Runner) chownMount(ctx context.Context, m Mount) error {
-	owner := fmt.Sprintf("%d:%d", r.cfg.UID, r.cfg.GID)
+	owner, err := r.mountOwner(ctx)
+	if err != nil {
+		return err
+	}
 
 	created, err := r.client.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -287,6 +298,70 @@ func (r *Runner) chownMount(ctx context.Context, m Mount) error {
 		return fmt.Errorf("chown %s: %w", m.Source, ctx.Err())
 	}
 	return nil
+}
+
+// mountOwner is the uid:gid writable mounts are handed to. It follows the
+// image's USER by default, because the official Renovate image runs as a
+// non-1000 uid and a 1000-owned directory is not writable for it.
+func (r *Runner) mountOwner(ctx context.Context) (string, error) {
+	r.ownerMu.Lock()
+	defer r.ownerMu.Unlock()
+
+	if r.owner != "" {
+		return r.owner, nil
+	}
+	owner, err := r.resolveOwner(ctx)
+	if err != nil {
+		return "", err
+	}
+	r.owner = owner
+	return owner, nil
+}
+
+func (r *Runner) resolveOwner(ctx context.Context) (string, error) {
+	if r.cfg.UID > 0 {
+		gid := r.cfg.GID
+		if gid <= 0 {
+			gid = r.cfg.UID
+		}
+		return fmt.Sprintf("%d:%d", r.cfg.UID, gid), nil
+	}
+
+	inspect, err := r.client.ImageInspect(ctx, r.cfg.Image)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %s to resolve its user: %w", r.cfg.Image, err)
+	}
+	user := ""
+	if inspect.Config != nil {
+		user = inspect.Config.User
+	}
+	uid, gid, ok := parseImageUser(user)
+	if !ok {
+		return defaultOwner, nil
+	}
+	return fmt.Sprintf("%d:%d", uid, gid), nil
+}
+
+// parseImageUser extracts the numeric user from a Docker image's USER value,
+// which may be "1000", "1000:1000" or a user name. Names cannot be resolved
+// without running the image, so they are rejected.
+func parseImageUser(user string) (int, int, bool) {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return 0, 0, false
+	}
+
+	uidPart, gidPart, hasGID := strings.Cut(user, ":")
+	uid, err := strconv.Atoi(uidPart)
+	if err != nil {
+		return 0, 0, false
+	}
+	if hasGID {
+		if gid, err := strconv.Atoi(gidPart); err == nil {
+			return uid, gid, true
+		}
+	}
+	return uid, uid, true
 }
 
 func toMountType(t MountType) mount.Type {

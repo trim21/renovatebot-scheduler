@@ -48,8 +48,9 @@ type Config struct {
 	// ExtraConfig is written into the container and referenced through
 	// RENOVATE_CONFIG_FILE.
 	ExtraConfig []byte
-	// UID and GID are the user Renovate runs as. Writable mounts are chowned to
-	// them before the run, because Docker creates them as root.
+	// UID and GID are the user writable mounts are handed to. Zero means the
+	// user declared by the image, which is what the official Renovate image
+	// requires: it runs as uid 12021.
 	UID int
 	GID int
 }
@@ -70,10 +71,10 @@ func FromEnv() (Config, error) {
 	}
 
 	var err error
-	if cfg.UID, err = envInt("RENOVATE_UID", 1000); err != nil {
+	if cfg.UID, err = envInt("RENOVATE_UID", 0); err != nil {
 		return Config{}, err
 	}
-	if cfg.GID, err = envInt("RENOVATE_GID", 1000); err != nil {
+	if cfg.GID, err = envInt("RENOVATE_GID", 0); err != nil {
 		return Config{}, err
 	}
 

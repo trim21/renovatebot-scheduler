@@ -95,3 +95,25 @@ func TestFromEnv(t *testing.T) {
 		t.Fatal("expected an error for an invalid pull policy")
 	}
 }
+
+func TestParseImageUser(t *testing.T) {
+	tests := []struct {
+		user   string
+		uid    int
+		gid    int
+		wantOK bool
+	}{
+		{user: "12021", uid: 12021, gid: 12021, wantOK: true},
+		{user: "1000:2000", uid: 1000, gid: 2000, wantOK: true},
+		{user: " 12021 ", uid: 12021, gid: 12021, wantOK: true},
+		{user: "", wantOK: false},
+		{user: "ubuntu", wantOK: false},
+		{user: "ubuntu:ubuntu", wantOK: false},
+	}
+	for _, tc := range tests {
+		uid, gid, ok := parseImageUser(tc.user)
+		if ok != tc.wantOK || uid != tc.uid || gid != tc.gid {
+			t.Errorf("parseImageUser(%q) = %d, %d, %v; want %d, %d, %v", tc.user, uid, gid, ok, tc.uid, tc.gid, tc.wantOK)
+		}
+	}
+}
