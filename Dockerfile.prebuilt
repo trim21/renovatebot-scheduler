@@ -1,0 +1,17 @@
+# Image assembled from a binary compiled on the CI runner. The Go build cache
+# from setup-go is reused there, so this build only produces the runtime layer
+# instead of re-downloading modules and recompiling inside the image.
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -u 10001 app \
+    && mkdir -p /data && chown app:app /data
+
+ARG TARGETARCH
+COPY dist/linux-${TARGETARCH}/renovatebot-scheduler /usr/local/bin/renovatebot-scheduler
+
+USER app
+WORKDIR /data
+ENV ADDR=:8080 DATA_DIR=/data
+EXPOSE 8080
+ENTRYPOINT ["renovatebot-scheduler"]
