@@ -19,11 +19,21 @@ type hookRepository struct {
 }
 
 type hookPullRequest struct {
-	State string `json:"state"`
+	State string   `json:"state"`
+	User  hookUser `json:"user"`
 }
 
 type hookComment struct {
 	Body string `json:"body"`
+}
+
+// hookChange is one entry of the "changes" object of an edited event.
+type hookChange struct {
+	From string `json:"from"`
+}
+
+type hookChanges struct {
+	Body *hookChange `json:"body,omitempty"`
 }
 
 // hookPayload is the upstream (Forgejo) webhook schema. Only the fields this
@@ -38,6 +48,7 @@ type hookPayload struct {
 	Sender      hookUser         `json:"sender"`
 	PullRequest *hookPullRequest `json:"pull_request"`
 	Comment     *hookComment     `json:"comment"`
+	Changes     *hookChanges     `json:"changes"`
 }
 
 type triggerDecision struct {
@@ -49,6 +60,11 @@ type triggerDecision struct {
 // Events sent by the Renovate bot itself never trigger a run: Renovate opens
 // pull requests, pushes renovate/* branches and edits its dashboard issue, so
 // reacting to those would loop forever.
+//
+// A pull request only triggers a run when its author is the bot and either
+// its body is edited (checking a checkbox, e.g. "rebase this PR") or its head
+// branch moved; PRs opened by other users are ignored, and base-branch pushes
+// arrive as push events anyway.
 func decideTrigger(event string, p *hookPayload, botUser string) triggerDecision {
 	if botUser != "" && strings.EqualFold(p.Sender.Login, botUser) {
 		return triggerDecision{Reason: "sender is the renovate bot"}
@@ -74,15 +90,30 @@ func decideTrigger(event string, p *hookPayload, botUser string) triggerDecision
 		if p.PullRequest == nil {
 			return triggerDecision{Reason: "malformed pull request payload"}
 		}
-		switch p.Action {
-		case "opened", "reopened", "synchronized":
-		default:
-			return triggerDecision{Reason: "pull request action " + p.Action}
-		}
 		if p.PullRequest.State != "" && p.PullRequest.State != "open" {
 			return triggerDecision{Reason: "pull request is " + p.PullRequest.State}
 		}
-		return triggerDecision{Trigger: true, Reason: "pull request " + p.Action}
+		if !strings.EqualFold(p.PullRequest.User.Login, botUser) {
+			return triggerDecision{Reason: "pull request author is " + p.PullRequest.User.Login}
+		}
+		switch p.Action {
+		case "synchronized":
+			// The head branch of a Renovate PR moved, typically a manual push
+			// resolving a conflict. Renovate's own pushes never get here: the
+			// bot is the sender and is dropped above.
+			return triggerDecision{Trigger: true, Reason: "renovate pull request synchronized"}
+		case "edited":
+			// Only a body edit matters: checking a checkbox (e.g. "rebase
+			// this PR") rewrites the description, and Renovate acts on it
+			// during the next run. Title and target-branch edits arrive as
+			// "edited" too but only carry changes.title / changes.ref.
+			if p.Changes == nil || p.Changes.Body == nil {
+				return triggerDecision{Reason: "pull request body was not changed"}
+			}
+			return triggerDecision{Trigger: true, Reason: "renovate pull request body edited"}
+		default:
+			return triggerDecision{Reason: "pull request action " + p.Action}
+		}
 
 	case "issue_comment":
 		if p.Action != "created" {

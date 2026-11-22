@@ -42,8 +42,9 @@ Forgejo ──webhook──▶ /webhook/{token} ──▶ signature ──▶ de
 | `push` to the repository's default branch | yes |
 | `push` that deletes a branch | no |
 | `push` to any other branch | no |
-| `pull_request` / `pull_request_sync`, action `opened`, `reopened`, `synchronized` | yes |
-| `pull_request` that is no longer open | no |
+| `pull_request` / `pull_request_sync`, action `edited`, `changes.body` present, PR author is `BOT_USER` | yes |
+| `pull_request_sync`, action `synchronized`, PR author is `BOT_USER` | yes |
+| any other `pull_request` / `pull_request_sync` event | no |
 | `issue_comment`, action `created`, body mentions `@<BOT_USER>` | yes |
 | `issues` | never (Renovate edits its own dashboard issue) |
 | `ping` and everything else | no |

@@ -77,11 +77,13 @@ func TestDecideTriggerPush(t *testing.T) {
 
 func TestDecideTriggerPullRequest(t *testing.T) {
 	const bot = "renovate-bot"
-	pr := func(action, state, sender string) *hookPayload {
-		p := &hookPayload{Action: action, PullRequest: &hookPullRequest{State: state}}
+	pr := func(action, state, author, sender string, changes *hookChanges) *hookPayload {
+		p := &hookPayload{Action: action, Changes: changes, PullRequest: &hookPullRequest{State: state}}
+		p.PullRequest.User.Login = author
 		p.Sender.Login = sender
 		return p
 	}
+	bodyEdit := &hookChanges{Body: &hookChange{From: "old body"}}
 
 	cases := []struct {
 		name    string
@@ -89,12 +91,17 @@ func TestDecideTriggerPullRequest(t *testing.T) {
 		payload *hookPayload
 		want    bool
 	}{
-		{"opened", "pull_request", pr("opened", "open", "alice"), true},
-		{"reopened", "pull_request", pr("reopened", "open", "alice"), true},
-		{"synchronized", "pull_request_sync", pr("synchronized", "open", "alice"), true},
-		{"closed", "pull_request", pr("closed", "closed", "alice"), false},
-		{"edited", "pull_request", pr("edited", "open", "alice"), false},
-		{"opened by bot", "pull_request", pr("opened", "open", bot), false},
+		{"bot pr body edited", "pull_request", pr("edited", "open", bot, "alice", bodyEdit), true},
+		{"bot pr synchronized", "pull_request_sync", pr("synchronized", "open", bot, "alice", nil), true},
+		{"bot pr synchronized via pull_request event", "pull_request", pr("synchronized", "open", bot, "alice", nil), true},
+		{"human pr synchronized", "pull_request_sync", pr("synchronized", "open", "alice", "alice", nil), false},
+		{"bot pr title edited", "pull_request", pr("edited", "open", bot, "alice", nil), false},
+		{"human pr body edited", "pull_request", pr("edited", "open", "alice", "alice", bodyEdit), false},
+		{"bot pr opened", "pull_request", pr("opened", "open", bot, "alice", nil), false},
+		{"closed pr body edited", "pull_request", pr("edited", "closed", bot, "alice", bodyEdit), false},
+		{"bot edits its own pr body", "pull_request", pr("edited", "open", bot, bot, bodyEdit), false},
+		{"bot pushes to its own pr branch", "pull_request_sync", pr("synchronized", "open", bot, bot, nil), false},
+		{"malformed payload", "pull_request", &hookPayload{Action: "edited"}, false},
 	}
 
 	for _, tc := range cases {
