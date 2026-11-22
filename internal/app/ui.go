@@ -76,14 +76,15 @@ type repoRow struct {
 }
 
 type pageData struct {
-	Login   string
-	CSRF    string
-	Error   string
-	Enabled []repoRow
-	Other   []repoRow
-	Runs    []RunRecord
-	Run     *RunRecord
-	Log     string
+	Login      string
+	CSRF       string
+	Error      string
+	RepoFilter string
+	Enabled    []repoRow
+	Other      []repoRow
+	Runs       []RunRecord
+	Run        *RunRecord
+	Log        string
 }
 
 func (s *Server) session(r *http.Request) *Session {
@@ -346,8 +347,17 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runs, err := s.store.RecentRuns(200)
-	data := pageData{Login: sess.Login, CSRF: sess.CSRF, Runs: runs}
+	repoFilter := strings.TrimSpace(r.URL.Query().Get("repo"))
+
+	var runs []RunRecord
+	var err error
+	if repoFilter == "" {
+		runs, err = s.store.RecentRuns(200)
+	} else {
+		runs, err = s.store.RunsForRepo(repoFilter, 200)
+	}
+
+	data := pageData{Login: sess.Login, CSRF: sess.CSRF, Runs: runs, RepoFilter: repoFilter}
 	if err != nil {
 		data.Error = "Could not read run history: " + err.Error()
 	}

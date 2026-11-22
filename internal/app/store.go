@@ -171,6 +171,16 @@ func (s *Store) AppendRun(record RunRecord) error {
 
 // RecentRuns returns the most recent records, newest first, without their logs.
 func (s *Store) RecentRuns(limit int) ([]RunRecord, error) {
+	return s.recentRuns("", limit)
+}
+
+// RunsForRepo returns the most recent records of one repository, newest first,
+// without their logs.
+func (s *Store) RunsForRepo(fullName string, limit int) ([]RunRecord, error) {
+	return s.recentRuns(fullName, limit)
+}
+
+func (s *Store) recentRuns(fullName string, limit int) ([]RunRecord, error) {
 	query := s.client.Run.Query().
 		Select(
 			run.FieldID,
@@ -183,6 +193,9 @@ func (s *Store) RecentRuns(limit int) ([]RunRecord, error) {
 			run.FieldError,
 		).
 		Order(ent.Desc(run.FieldStartedAt))
+	if fullName != "" {
+		query = query.Where(run.RepoEQ(fullName))
+	}
 	if limit > 0 {
 		query = query.Limit(limit)
 	}

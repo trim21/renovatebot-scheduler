@@ -69,6 +69,51 @@ func TestStoreRepositories(t *testing.T) {
 	}
 }
 
+func TestStoreRunsForRepo(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	runs := []struct {
+		id   string
+		repo string
+	}{
+		{"run-1", "owner/a"},
+		{"run-2", "owner/b"},
+		{"run-3", "owner/a"},
+	}
+	for i, item := range runs {
+		if err := store.AppendRun(RunRecord{
+			ID:         item.id,
+			Repo:       item.repo,
+			StartedAt:  base.Add(time.Duration(i) * time.Second),
+			FinishedAt: base.Add(time.Duration(i)*time.Second + time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := store.RunsForRepo("owner/a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "run-3" || got[1].ID != "run-1" {
+		t.Fatalf("unexpected runs for owner/a: %+v", got)
+	}
+
+	none, err := store.RunsForRepo("owner/unknown", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected no runs for an unknown repository, got %+v", none)
+	}
+}
+
 func TestStoreRuns(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenStore(dir)

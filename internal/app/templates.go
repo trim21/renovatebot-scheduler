@@ -55,7 +55,7 @@ form { display: inline; }
 <tbody>
 {{range .Enabled}}
 <tr>
-<td><code>{{.FullName}}</code>{{if .Missing}} <span class="muted">(not visible to your account)</span>{{end}}</td>
+<td><a href="/runs?repo={{.FullName}}"><code>{{.FullName}}</code></a>{{if .Missing}} <span class="muted">(not visible to your account)</span>{{end}}</td>
 <td><span data-repo="{{.FullName}}" class="state-{{.Status.State}}">{{.Status.State}}</span></td>
 <td>{{if .Status.Trigger}}{{.Status.Trigger}}{{else}}<span class="muted">-</span>{{end}}</td>
 <td>{{if .Status.LastFinish.IsZero}}<span class="muted">-</span>{{else}}{{fmtTime .Status.LastFinish}}{{end}}</td>
@@ -122,7 +122,8 @@ form { display: inline; }
 
 {{define "runs"}}{{template "head" .}}
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<h2>Run history</h2>
+<h2>Run history{{if .RepoFilter}} for <code>{{.RepoFilter}}</code>{{end}}</h2>
+{{if .RepoFilter}}<p><a href="/runs">Show all runs</a></p>{{end}}
 {{if .Runs}}
 <table>
 <thead><tr><th>Started</th><th>Repository</th><th>Trigger</th><th>Exit</th><th>Duration</th><th>Run</th></tr></thead>
@@ -130,7 +131,7 @@ form { display: inline; }
 {{range .Runs}}
 <tr>
 <td>{{fmtTime .StartedAt}}</td>
-<td><code>{{.Repo}}</code></td>
+<td><a href="/runs?repo={{.Repo}}"><code>{{.Repo}}</code></a></td>
 <td>{{.Trigger}}{{if gt .Attempt 1}} (attempt {{.Attempt}}){{end}}</td>
 <td>{{if .Success}}<span class="ok">0</span>{{else}}<span class="fail">{{.ExitCode}}</span>{{end}}</td>
 <td>{{fmtDuration .Duration}}</td>
@@ -144,7 +145,7 @@ form { display: inline; }
 
 {{define "run"}}{{template "head" .}}
 <h2>Run {{.Run.ID}}</h2>
-<p><code>{{.Run.Repo}}</code> · trigger {{.Run.Trigger}} · attempt {{.Run.Attempt}} · exit {{.Run.ExitCode}} · {{fmtDuration .Run.Duration}}</p>
+<p><a href="/runs?repo={{.Run.Repo}}"><code>{{.Run.Repo}}</code></a> · trigger {{.Run.Trigger}} · attempt {{.Run.Attempt}} · exit {{.Run.ExitCode}} · {{fmtDuration .Run.Duration}}</p>
 {{if .Run.Error}}<p class="error">{{.Run.Error}}</p>{{end}}
 <pre>{{.Log}}</pre>
 {{template "foot" .}}{{end}}
