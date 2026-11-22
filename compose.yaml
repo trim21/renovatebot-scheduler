@@ -1,0 +1,78 @@
+# Example deployment with RUNNER=docker: the scheduler talks to the Docker
+# daemon over the mounted socket and starts one short-lived Renovate container
+# per run.
+#
+# Replace every "change-me" value before starting:
+#
+#   docker compose up -d
+#
+# The non-root user in the image needs access to the Docker socket. Find its
+# group on the host and pass it as DOCKER_SOCKET_GID:
+#
+#   DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)" docker compose up -d
+
+services:
+  renovate-scheduler:
+    image: ghcr.io/trim21/renovatebot-scheduler:latest
+    container_name: renovate-scheduler
+    restart: unless-stopped
+    ports:
+      # Put a TLS reverse proxy in front of this port; BASE_URL must be the
+      # public https URL so cookies are marked secure.
+      - "8080:8080"
+    environment:
+      # Public URL of this service. Must match the OAuth callback and the
+      # webhook URL registered on Forgejo.
+      BASE_URL: https://renovate.example.com
+      # Forgejo instance, without a trailing slash.
+      FORGEJO_URL: https://git.example.com
+
+      # OAuth2 application registered on Forgejo.
+      OAUTH_CLIENT_ID: change-me
+      OAUTH_CLIENT_SECRET: change-me
+
+      # PAT of the dedicated bot account Renovate runs as.
+      RENOVATE_TOKEN: change-me
+      # Optional: resolved from RENOVATE_TOKEN when left empty.
+      BOT_USER: renovate-bot
+      # Users allowed to open the admin page, comma separated. When empty only
+      # BOT_USER can sign in.
+      ALLOWED_USERS: alice
+
+      DATA_DIR: /data
+      RUNNER: docker
+
+      # Renovate container settings. Pin RENOVATE_IMAGE to a concrete version
+      # instead of latest for reproducible runs.
+      RENOVATE_IMAGE: ghcr.io/renovatebot/renovate:latest
+      RENOVATE_PULL: missing
+      RENOVATE_MOUNTS: renovate-cache:/tmp/renovate/cache
+      RENOVATE_LOG_LEVEL: info
+
+      # Scheduler tuning, defaults shown.
+      # DEBOUNCE: 20s
+      # RUN_TIMEOUT: 30m
+      # CONCURRENCY: 1
+      # MAX_RETRIES: 2
+      # RETRY_BACKOFF: 1m
+      # STARTUP_RUN: "true"
+
+    volumes:
+      - renovate-scheduler-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_SOCKET_GID:-999}"
+
+    # Uncomment when Forgejo is reachable from the host over plain http only.
+    # extra_hosts:
+    #   - "git.example.com:host-gateway"
+
+volumes:
+  renovate-scheduler-data:
+  # Mounted into the Renovate containers started by the scheduler, not into
+  # the scheduler itself. Keeps the Renovate cache between runs.
+  renovate-cache:
+
+# For RUNNER=system, the scheduler binary has to live inside the Renovate
+# image instead. That variant needs neither the socket mount nor the
+# renovate-cache volume; drop them and run the combined image directly.
