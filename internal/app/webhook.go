@@ -22,10 +22,6 @@ type hookPullRequest struct {
 	State string `json:"state"`
 }
 
-type hookIssue struct {
-	Title string `json:"title"`
-}
-
 type hookComment struct {
 	Body string `json:"body"`
 }
@@ -41,7 +37,6 @@ type hookPayload struct {
 	Repository  hookRepository   `json:"repository"`
 	Sender      hookUser         `json:"sender"`
 	PullRequest *hookPullRequest `json:"pull_request"`
-	Issue       *hookIssue       `json:"issue"`
 	Comment     *hookComment     `json:"comment"`
 }
 
@@ -102,13 +97,9 @@ func decideTrigger(event string, p *hookPayload, botUser string) triggerDecision
 		return triggerDecision{Reason: "comment does not mention the bot"}
 
 	case "issues":
-		if p.Action != "edited" || p.Issue == nil {
-			return triggerDecision{Reason: "irrelevant issue event"}
-		}
-		if strings.Contains(strings.ToLower(p.Issue.Title), "dependency dashboard") {
-			return triggerDecision{Trigger: true, Reason: "dependency dashboard edited"}
-		}
-		return triggerDecision{Reason: "title is not the dependency dashboard"}
+		// Renovate edits its own dependency dashboard issue, so reacting to
+		// issue events would let a run trigger the next run.
+		return triggerDecision{Reason: "issue events are ignored"}
 
 	case "ping":
 		return triggerDecision{Reason: "ping"}

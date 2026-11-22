@@ -126,18 +126,12 @@ func TestDecideTriggerIssueComment(t *testing.T) {
 	}
 }
 
-func TestDecideTriggerDashboard(t *testing.T) {
-	dashboard := &hookPayload{Action: "edited", Issue: &hookIssue{Title: "Dependency Dashboard"}}
-	dashboard.Sender.Login = "alice"
+func TestDecideTriggerIgnoresIssues(t *testing.T) {
+	payload := &hookPayload{Action: "edited"}
+	payload.Sender.Login = "alice"
 
-	if got := decideTrigger("issues", dashboard, "renovate-bot"); !got.Trigger {
-		t.Fatalf("dashboard edit should trigger: %s", got.Reason)
-	}
-
-	other := &hookPayload{Action: "edited", Issue: &hookIssue{Title: "Something else"}}
-	other.Sender.Login = "alice"
-	if got := decideTrigger("issues", other, "renovate-bot"); got.Trigger {
-		t.Fatalf("unrelated issue should not trigger: %s", got.Reason)
+	if got := decideTrigger("issues", payload, "renovate-bot"); got.Trigger {
+		t.Fatalf("issue events must not trigger: %s", got.Reason)
 	}
 }
 
