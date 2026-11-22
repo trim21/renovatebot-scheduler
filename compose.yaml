@@ -42,6 +42,11 @@ services:
       DATA_DIR: /data
       RUNNER: docker
 
+      # Maximum number of Renovate runs executing at the same time, across all
+      # repositories. Each repository still runs at most one at a time, and
+      # waiting events queue another run instead of being dropped.
+      CONCURRENCY: 1
+
       # Renovate container settings. Pin RENOVATE_IMAGE to a concrete version
       # instead of latest for reproducible runs.
       RENOVATE_IMAGE: ghcr.io/renovatebot/renovate:latest
@@ -49,10 +54,9 @@ services:
       RENOVATE_MOUNTS: renovate-cache:/tmp/renovate/cache
       RENOVATE_LOG_LEVEL: info
 
-      # Scheduler tuning, defaults shown.
+      # Other scheduler tuning, defaults shown.
       # DEBOUNCE: 20s
       # RUN_TIMEOUT: 30m
-      # CONCURRENCY: 1
       # MAX_RETRIES: 2
       # RETRY_BACKOFF: 1m
       # STARTUP_RUN: "true"
