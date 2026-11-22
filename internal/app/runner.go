@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -62,6 +63,16 @@ type executor struct {
 	backend runner.Runner
 	store   *Store
 	timeout time.Duration
+}
+
+// Prepare gives the backend a chance to do one-time setup. Runners without a
+// preparation step are simply skipped.
+func (e *executor) Prepare(ctx context.Context, log io.Writer) error {
+	preparer, ok := e.backend.(runner.Preparer)
+	if !ok {
+		return nil
+	}
+	return preparer.Prepare(ctx, log)
 }
 
 func (e *executor) Run(ctx context.Context, req runner.RunRequest) runner.RunResult {

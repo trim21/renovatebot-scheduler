@@ -3,6 +3,7 @@ package docker
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -47,6 +48,10 @@ type Config struct {
 	// ExtraConfig is written into the container and referenced through
 	// RENOVATE_CONFIG_FILE.
 	ExtraConfig []byte
+	// UID and GID are the user Renovate runs as. Writable mounts are chowned to
+	// them before the run, because Docker creates them as root.
+	UID int
+	GID int
 }
 
 // FromEnv reads the Docker-specific environment variables.
@@ -62,6 +67,14 @@ func FromEnv() (Config, error) {
 	case PullMissing, PullAlways, PullNever:
 	default:
 		return Config{}, fmt.Errorf(`RENOVATE_PULL must be one of "missing", "always", "never"`)
+	}
+
+	var err error
+	if cfg.UID, err = envInt("RENOVATE_UID", 1000); err != nil {
+		return Config{}, err
+	}
+	if cfg.GID, err = envInt("RENOVATE_GID", 1000); err != nil {
+		return Config{}, err
 	}
 
 	mounts, err := ParseMounts(os.Getenv("RENOVATE_MOUNTS"))
@@ -128,4 +141,19 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must not be negative", key)
+	}
+	return value, nil
 }

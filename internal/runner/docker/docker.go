@@ -10,6 +10,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -29,6 +30,9 @@ const containerConfigPath = "/tmp/renovate-config.json"
 type Runner struct {
 	cfg    Config
 	client *client.Client
+
+	permMu   sync.Mutex
+	permDone map[string]bool
 }
 
 func New(cfg Config) (*Runner, error) {
@@ -36,7 +40,7 @@ func New(cfg Config) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &Runner{cfg: cfg, client: cli}, nil
+	return &Runner{cfg: cfg, client: cli, permDone: make(map[string]bool)}, nil
 }
 
 func clientOptions(host string) []client.Opt {
@@ -49,8 +53,22 @@ func clientOptions(host string) []client.Opt {
 	return []client.Opt{client.WithHost(host)}
 }
 
+// Prepare pulls the image if needed and fixes mount ownership, so the first
+// webhook-triggered run does not pay for either. It is safe to call more than
+// once: ownership is tracked per mount and the image check is cheap.
+func (r *Runner) Prepare(ctx context.Context, log io.Writer) error {
+	if err := r.ensureImage(ctx, log); err != nil {
+		return err
+	}
+	return r.ensureMountOwnership(ctx, log)
+}
+
 func (r *Runner) Run(ctx context.Context, req runner.RunRequest, log io.Writer) runner.RunResult {
 	if err := r.ensureImage(ctx, log); err != nil {
+		return runner.RunResult{ExitCode: -1, Err: err}
+	}
+
+	if err := r.ensureMountOwnership(ctx, log); err != nil {
 		return runner.RunResult{ExitCode: -1, Err: err}
 	}
 
@@ -179,12 +197,8 @@ func hostConfig(mounts []Mount) *container.HostConfig {
 func toDockerMounts(mounts []Mount) []mount.Mount {
 	out := make([]mount.Mount, 0, len(mounts))
 	for _, m := range mounts {
-		mountType := mount.TypeVolume
-		if m.Type == MountBind {
-			mountType = mount.TypeBind
-		}
 		out = append(out, mount.Mount{
-			Type:     mountType,
+			Type:     toMountType(m.Type),
 			Source:   m.Source,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
@@ -196,6 +210,90 @@ func toDockerMounts(mounts []Mount) []mount.Mount {
 func containerName(req runner.RunRequest) string {
 	sum := sha1.Sum([]byte(req.Repo))
 	return fmt.Sprintf("renovate-%s-%s", hex.EncodeToString(sum[:])[:10], strings.ToLower(req.RunID))
+}
+
+// ensureMountOwnership makes writable mounts usable by the Renovate user.
+// Docker creates a missing bind source, and a fresh volume's root directory, as
+// root, while the Renovate image runs as UID/GID 1000 — that mismatch is what
+// produces EACCES on /tmp/renovate/cache. Each mount is fixed once per process.
+func (r *Runner) ensureMountOwnership(ctx context.Context, log io.Writer) error {
+	for _, m := range r.cfg.Mounts {
+		if m.ReadOnly || r.mountOwnershipFixed(m.Source) {
+			continue
+		}
+
+		if err := r.chownMount(ctx, m); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(log, "# fixed permissions of %s\n", m.Source)
+
+		r.permMu.Lock()
+		r.permDone[m.Source] = true
+		r.permMu.Unlock()
+	}
+	return nil
+}
+
+func (r *Runner) mountOwnershipFixed(source string) bool {
+	r.permMu.Lock()
+	defer r.permMu.Unlock()
+	return r.permDone[source]
+}
+
+// chownMount runs a one-off root container that hands the mount to the Renovate
+// user. It reuses the Renovate image so no extra image has to be pulled, and
+// runs without networking.
+func (r *Runner) chownMount(ctx context.Context, m Mount) error {
+	owner := fmt.Sprintf("%d:%d", r.cfg.UID, r.cfg.GID)
+
+	created, err := r.client.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:      r.cfg.Image,
+			User:       "0",
+			Entrypoint: []string{"chown"},
+			Cmd:        []string{"-R", owner, "/mnt"},
+		},
+		HostConfig: &container.HostConfig{
+			Mounts: []mount.Mount{{
+				Type:   toMountType(m.Type),
+				Source: m.Source,
+				Target: "/mnt",
+			}},
+			NetworkMode: container.NetworkMode("none"),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create permission fixer for %s: %w", m.Source, err)
+	}
+	defer r.remove(created.ID, io.Discard)
+
+	if _, err := r.client.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("start permission fixer for %s: %w", m.Source, err)
+	}
+
+	wait := r.client.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{
+		Condition: container.WaitConditionNotRunning,
+	})
+	select {
+	case err := <-wait.Error:
+		if err != nil {
+			return fmt.Errorf("wait for permission fixer for %s: %w", m.Source, err)
+		}
+	case resp := <-wait.Result:
+		if resp.StatusCode != 0 {
+			return fmt.Errorf("chown %s: exit code %d", m.Source, resp.StatusCode)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("chown %s: %w", m.Source, ctx.Err())
+	}
+	return nil
+}
+
+func toMountType(t MountType) mount.Type {
+	if t == MountBind {
+		return mount.TypeBind
+	}
+	return mount.TypeVolume
 }
 
 func (r *Runner) ensureImage(ctx context.Context, log io.Writer) error {

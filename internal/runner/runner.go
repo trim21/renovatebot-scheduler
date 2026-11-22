@@ -29,6 +29,13 @@ type Runner interface {
 	Run(ctx context.Context, req RunRequest, log io.Writer) RunResult
 }
 
+// Preparer is implemented by runners that need one-time setup before the first
+// run, such as pulling the image or fixing mount ownership. Prepare is
+// best-effort: the runner must still work if it is never called.
+type Preparer interface {
+	Prepare(ctx context.Context, log io.Writer) error
+}
+
 // Kind selects the execution backend through the RUNNER environment variable.
 type Kind string
 

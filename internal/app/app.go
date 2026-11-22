@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,6 +57,16 @@ func Run() error {
 	executor, err := NewRunner(cfg, store)
 	if err != nil {
 		return err
+	}
+
+	if preparer, ok := executor.(interface {
+		Prepare(context.Context, io.Writer) error
+	}); ok {
+		prepareCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if err := preparer.Prepare(prepareCtx, os.Stderr); err != nil {
+			logger.Warn().Err(err).Msg("runner preparation failed, retrying on the first run")
+		}
+		cancel()
 	}
 
 	scheduler := NewScheduler(executor, cfg.Debounce, cfg.Concurrency, cfg.MaxRetries, cfg.RetryBackoff)
