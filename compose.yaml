@@ -45,7 +45,7 @@ services:
       # Maximum number of Renovate runs executing at the same time, across all
       # repositories. Each repository still runs at most one at a time, and
       # waiting events queue another run instead of being dropped.
-      CONCURRENCY: 1
+      CONCURRENCY: 2
 
       # Run every enabled repository at least once per interval, regardless of
       # events. Set to 0 to disable.

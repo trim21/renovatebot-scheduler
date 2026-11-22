@@ -88,7 +88,7 @@ func loadConfig() (*Config, error) {
 	if cfg.RetryBackoff, err = envDuration("RETRY_BACKOFF", time.Minute); err != nil {
 		problems = append(problems, err.Error())
 	}
-	if cfg.Concurrency, err = envInt("CONCURRENCY", 1); err != nil {
+	if cfg.Concurrency, err = envInt("CONCURRENCY", 2); err != nil {
 		problems = append(problems, err.Error())
 	} else if cfg.Concurrency < 1 {
 		problems = append(problems, "CONCURRENCY must be at least 1")
