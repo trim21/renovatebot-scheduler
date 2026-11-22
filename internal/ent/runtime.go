@@ -22,6 +22,10 @@ func init() {
 	repo.DefaultEnabledAt = repoDescEnabledAt.Default.(func() time.Time)
 	runFields := schema.Run{}.Fields()
 	_ = runFields
+	// runDescExitCode is the schema descriptor for exit_code field.
+	runDescExitCode := runFields[6].Descriptor()
+	// run.DefaultExitCode holds the default value on creation for the exit_code field.
+	run.DefaultExitCode = runDescExitCode.Default.(int)
 	// runDescError is the schema descriptor for error field.
 	runDescError := runFields[7].Descriptor()
 	// run.DefaultError holds the default value on creation for the error field.

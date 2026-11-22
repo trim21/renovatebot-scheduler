@@ -133,7 +133,7 @@ form { display: inline; }
 <td>{{fmtTime .StartedAt}}</td>
 <td><a href="/runs?repo={{.Repo}}"><code>{{.Repo}}</code></a></td>
 <td>{{.Trigger}}{{if gt .Attempt 1}} (attempt {{.Attempt}}){{end}}</td>
-<td>{{if .Success}}<span class="ok">0</span>{{else}}<span class="fail">{{.ExitCode}}</span>{{end}}</td>
+<td>{{if .Running}}<span class="muted">running</span>{{else if .Success}}<span class="ok">0</span>{{else}}<span class="fail">{{.ExitCode}}</span>{{end}}</td>
 <td>{{fmtDuration .Duration}}</td>
 <td><a href="/runs/{{.ID}}">{{.ID}}</a></td>
 </tr>
@@ -145,8 +145,9 @@ form { display: inline; }
 
 {{define "run"}}{{template "head" .}}
 <h2>Run {{.Run.ID}}</h2>
-<p><a href="/runs?repo={{.Run.Repo}}"><code>{{.Run.Repo}}</code></a> · trigger {{.Run.Trigger}} · attempt {{.Run.Attempt}} · exit {{.Run.ExitCode}} · {{fmtDuration .Run.Duration}}</p>
+<p><a href="/runs?repo={{.Run.Repo}}"><code>{{.Run.Repo}}</code></a> · trigger {{.Run.Trigger}} · attempt {{.Run.Attempt}} · {{if .Run.Running}}<span class="muted">running</span>{{else}}exit {{.Run.ExitCode}}{{end}} · {{fmtDuration .Run.Duration}}</p>
 {{if .Run.Error}}<p class="error">{{.Run.Error}}</p>{{end}}
+{{if .Run.Running}}<p class="muted">The run is still in progress; this page refreshes every 3 seconds.</p><script>setTimeout(function(){location.reload()},3000)</script>{{end}}
 <pre>{{.Log}}</pre>
 {{template "foot" .}}{{end}}
 `

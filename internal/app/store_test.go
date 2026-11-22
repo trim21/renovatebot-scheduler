@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,7 +88,7 @@ func TestStoreRunsForRepo(t *testing.T) {
 		{"run-3", "owner/a"},
 	}
 	for i, item := range runs {
-		if err := store.AppendRun(RunRecord{
+		if err := recordRun(store, RunRecord{
 			ID:         item.id,
 			Repo:       item.repo,
 			StartedAt:  base.Add(time.Duration(i) * time.Second),
@@ -124,7 +125,7 @@ func TestStoreRuns(t *testing.T) {
 
 	base := time.Now().UTC().Truncate(time.Second)
 	for i := 0; i < 5; i++ {
-		if err := store.AppendRun(RunRecord{
+		if err := recordRun(store, RunRecord{
 			ID:         fmt.Sprintf("run-%d", i),
 			Repo:       "owner/repo",
 			Trigger:    "push",
@@ -166,5 +167,90 @@ func TestStoreRuns(t *testing.T) {
 	}
 	if _, err := store.ReadRunLog("nope", 10); err == nil {
 		t.Fatal("missing run log did not return an error")
+	}
+}
+
+func recordRun(store *Store, record RunRecord) error {
+	if err := store.StartRun(record); err != nil {
+		return err
+	}
+	return store.FinishRun(record)
+}
+
+func TestStoreRunningRun(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	start := time.Now().UTC().Truncate(time.Second)
+	if err := store.StartRun(RunRecord{
+		ID:        "run-live",
+		Repo:      "owner/repo",
+		Trigger:   "push",
+		Attempt:   1,
+		StartedAt: start,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	record, ok := store.FindRun("run-live")
+	if !ok || !record.Running {
+		t.Fatalf("expected a running record, got %+v (found %v)", record, ok)
+	}
+	if !record.FinishedAt.IsZero() {
+		t.Fatalf("running record has finished_at set: %v", record.FinishedAt)
+	}
+
+	runs, err := store.RecentRuns(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || !runs[0].Running {
+		t.Fatalf("expected the running run in the list, got %+v", runs)
+	}
+
+	if err := store.UpdateRunLog("run-live", []byte("partial output\n")); err != nil {
+		t.Fatal(err)
+	}
+	text, err := store.ReadRunLog("run-live", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "partial output" {
+		t.Fatalf("unexpected in-progress log: %q", text)
+	}
+
+	n, err := store.FailStaleRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 stale run, got %d", n)
+	}
+	record, _ = store.FindRun("run-live")
+	if record.Running || !strings.Contains(record.Error, "interrupted") {
+		t.Fatalf("stale run not marked interrupted: %+v", record)
+	}
+
+	if err := store.StartRun(RunRecord{ID: "run-done", Repo: "owner/repo", StartedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishRun(RunRecord{
+		ID:         "run-done",
+		FinishedAt: start.Add(time.Minute),
+		ExitCode:   0,
+		Log:        []byte("done\n"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, _ = store.FindRun("run-done")
+	if record.Running || record.ExitCode != 0 || record.Duration() != time.Minute {
+		t.Fatalf("unexpected finished record: %+v", record)
+	}
+	if text, err := store.ReadRunLog("run-done", 10); err != nil || text != "done" {
+		t.Fatalf("unexpected finished log: %q (err %v)", text, err)
 	}
 }

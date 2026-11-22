@@ -40,9 +40,14 @@ type RunRecord struct {
 	ExitCode   int
 	Error      string
 	Log        []byte
+	// Running is true while the run is still executing.
+	Running bool
 }
 
 func (r RunRecord) Duration() time.Duration {
+	if r.Running {
+		return time.Since(r.StartedAt)
+	}
 	return r.FinishedAt.Sub(r.StartedAt)
 }
 
@@ -150,23 +155,50 @@ func (s *Store) Delete(fullName string) error {
 	return err
 }
 
-func (s *Store) AppendRun(record RunRecord) error {
-	builder := s.client.Run.Create().
+// StartRun records a run that is about to execute, so it shows up in the
+// history while it is still in progress.
+func (s *Store) StartRun(record RunRecord) error {
+	_, err := s.client.Run.Create().
 		SetID(record.ID).
 		SetRepo(record.Repo).
 		SetTrigger(record.Trigger).
 		SetAttempt(record.Attempt).
 		SetStartedAt(record.StartedAt).
+		SetExitCode(-1).
+		Save(context.Background())
+	if err != nil {
+		return fmt.Errorf("start run: %w", err)
+	}
+	return nil
+}
+
+// FinishRun stores the outcome and log of a run started with StartRun.
+func (s *Store) FinishRun(record RunRecord) error {
+	builder := s.client.Run.UpdateOneID(record.ID).
 		SetFinishedAt(record.FinishedAt).
 		SetExitCode(record.ExitCode).
 		SetError(record.Error)
 	if len(record.Log) > 0 {
 		builder = builder.SetLog(record.Log)
 	}
-	if _, err := builder.Save(context.Background()); err != nil {
-		return fmt.Errorf("save run: %w", err)
+	if err := builder.Exec(context.Background()); err != nil {
+		return fmt.Errorf("finish run: %w", err)
 	}
 	return nil
+}
+
+// FailStaleRuns marks runs left in progress by a previous process as failed.
+func (s *Store) FailStaleRuns() (int, error) {
+	n, err := s.client.Run.Update().
+		Where(run.FinishedAtIsNil()).
+		SetFinishedAt(time.Now()).
+		SetExitCode(-1).
+		SetError("interrupted by scheduler restart").
+		Save(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("fail stale runs: %w", err)
+	}
+	return n, nil
 }
 
 // RecentRuns returns the most recent records, newest first, without their logs.
@@ -222,6 +254,15 @@ func (s *Store) FindRun(id string) (RunRecord, bool) {
 	return toRunRecord(row), true
 }
 
+// UpdateRunLog stores the log captured so far for a run that is still in
+// progress.
+func (s *Store) UpdateRunLog(id string, log []byte) error {
+	if err := s.client.Run.UpdateOneID(id).SetLog(log).Exec(context.Background()); err != nil {
+		return fmt.Errorf("update run log: %w", err)
+	}
+	return nil
+}
+
 // ReadRunLog returns the last maxLines lines of a run log.
 func (s *Store) ReadRunLog(id string, maxLines int) (string, error) {
 	row, err := s.client.Run.Query().Select(run.FieldLog).Where(run.IDEQ(id)).Only(context.Background())
@@ -243,7 +284,7 @@ func toTrackedRepo(row *ent.Repo) *TrackedRepo {
 }
 
 func toRunRecord(row *ent.Run) RunRecord {
-	return RunRecord{
+	record := RunRecord{
 		ID:         row.ID,
 		Repo:       row.Repo,
 		Trigger:    row.Trigger,
@@ -254,6 +295,8 @@ func toRunRecord(row *ent.Run) RunRecord {
 		Error:      row.Error,
 		Log:        row.Log,
 	}
+	record.Running = row.FinishedAt.IsZero()
+	return record
 }
 
 func lastLines(data []byte, maxLines int) string {

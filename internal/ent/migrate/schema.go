@@ -31,8 +31,8 @@ var (
 		{Name: "trigger", Type: field.TypeString},
 		{Name: "attempt", Type: field.TypeInt},
 		{Name: "started_at", Type: field.TypeTime},
-		{Name: "finished_at", Type: field.TypeTime},
-		{Name: "exit_code", Type: field.TypeInt},
+		{Name: "finished_at", Type: field.TypeTime, Nullable: true},
+		{Name: "exit_code", Type: field.TypeInt, Default: -1},
 		{Name: "error", Type: field.TypeString, Default: ""},
 		{Name: "log", Type: field.TypeBytes, Nullable: true},
 	}

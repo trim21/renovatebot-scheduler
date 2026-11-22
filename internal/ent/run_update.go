@@ -105,6 +105,12 @@ func (_u *RunUpdate) SetNillableFinishedAt(v *time.Time) *RunUpdate {
 	return _u
 }
 
+// ClearFinishedAt clears the value of the "finished_at" field.
+func (_u *RunUpdate) ClearFinishedAt() *RunUpdate {
+	_u.mutation.ClearFinishedAt()
+	return _u
+}
+
 // SetExitCode sets the "exit_code" field.
 func (_u *RunUpdate) SetExitCode(v int) *RunUpdate {
 	_u.mutation.ResetExitCode()
@@ -210,6 +216,9 @@ func (_u *RunUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.FinishedAt(); ok {
 		_spec.SetField(run.FieldFinishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.FinishedAtCleared() {
+		_spec.ClearField(run.FieldFinishedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.ExitCode(); ok {
 		_spec.SetField(run.FieldExitCode, field.TypeInt, value)
@@ -320,6 +329,12 @@ func (_u *RunUpdateOne) SetNillableFinishedAt(v *time.Time) *RunUpdateOne {
 	if v != nil {
 		_u.SetFinishedAt(*v)
 	}
+	return _u
+}
+
+// ClearFinishedAt clears the value of the "finished_at" field.
+func (_u *RunUpdateOne) ClearFinishedAt() *RunUpdateOne {
+	_u.mutation.ClearFinishedAt()
 	return _u
 }
 
@@ -458,6 +473,9 @@ func (_u *RunUpdateOne) sqlSave(ctx context.Context) (_node *Run, err error) {
 	}
 	if value, ok := _u.mutation.FinishedAt(); ok {
 		_spec.SetField(run.FieldFinishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.FinishedAtCleared() {
+		_spec.ClearField(run.FieldFinishedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.ExitCode(); ok {
 		_spec.SetField(run.FieldExitCode, field.TypeInt, value)

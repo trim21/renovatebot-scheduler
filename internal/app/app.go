@@ -38,6 +38,12 @@ func Run() error {
 		}
 	}()
 
+	if n, err := store.FailStaleRuns(); err != nil {
+		logger.Warn().Err(err).Msg("mark interrupted runs as failed")
+	} else if n > 0 {
+		logger.Warn().Int("runs", n).Msg("marked interrupted runs as failed")
+	}
+
 	forgejo := NewForgejoClient(cfg.ForgejoURL)
 
 	botUser := cfg.BotUser

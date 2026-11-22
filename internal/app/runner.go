@@ -49,6 +49,36 @@ func (w *tailWriter) Bytes() []byte {
 	return append(marker, w.buf...)
 }
 
+// flushLogInterval is how often the log of an in-progress run is written to the
+// database, so the detail page shows output before the run finishes.
+const flushLogInterval = 2 * time.Second
+
+// flushLogs periodically stores the log captured so far. The returned function
+// stops the flusher and waits for it to exit.
+func flushLogs(store *Store, runID string, writer *tailWriter, interval time.Duration) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := store.UpdateRunLog(runID, writer.Bytes()); err != nil {
+					logger.Warn().Err(err).Str("run", runID).Msg("flush run log")
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
+}
+
 // Executor runs Renovate and records the run in the store. The scheduler
 // depends only on this interface, so the execution backend stays replaceable.
 //
@@ -63,6 +93,14 @@ type executor struct {
 	backend runner.Runner
 	store   *Store
 	timeout time.Duration
+}
+
+func newExecutor(backend runner.Runner, store *Store, timeout time.Duration) *executor {
+	return &executor{
+		backend: backend,
+		store:   store,
+		timeout: timeout,
+	}
 }
 
 // Prepare gives the backend a chance to do one-time setup. Runners without a
@@ -84,23 +122,34 @@ func (e *executor) Run(ctx context.Context, req runner.RunRequest) runner.RunRes
 	_, _ = fmt.Fprintf(logWriter, "# repo: %s\n# trigger: %s\n# attempt: %d\n# started: %s\n\n",
 		req.Repo, req.Trigger, req.Attempt, started.UTC().Format(time.RFC3339))
 
+	record := RunRecord{
+		ID:        runID,
+		Repo:      req.Repo,
+		Trigger:   req.Trigger,
+		Attempt:   req.Attempt,
+		StartedAt: started,
+	}
+	var stopFlush func()
+	if err := e.store.StartRun(record); err != nil {
+		logger.Error().Err(err).Str("repo", req.Repo).Str("run", runID).Msg("record run start")
+	} else {
+		stopFlush = flushLogs(e.store, runID, logWriter, flushLogInterval)
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	result := e.backend.Run(runCtx, req, logWriter)
 	cancel()
 
-	finished := time.Now()
-	record := RunRecord{
-		ID:         runID,
-		Repo:       req.Repo,
-		Trigger:    req.Trigger,
-		Attempt:    req.Attempt,
-		StartedAt:  started,
-		FinishedAt: finished,
-		ExitCode:   result.ExitCode,
-		Error:      errorString(result.Err),
-		Log:        logWriter.Bytes(),
+	if stopFlush != nil {
+		stopFlush()
 	}
-	if err := e.store.AppendRun(record); err != nil {
+
+	finished := time.Now()
+	record.FinishedAt = finished
+	record.ExitCode = result.ExitCode
+	record.Error = errorString(result.Err)
+	record.Log = logWriter.Bytes()
+	if err := e.store.FinishRun(record); err != nil {
 		logger.Error().Err(err).Str("repo", req.Repo).Str("run", runID).Msg("record run")
 	}
 
@@ -144,13 +193,13 @@ func NewRunner(cfg *Config, store *Store) (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &executor{backend: backend, store: store, timeout: cfg.RunTimeout}, nil
+		return newExecutor(backend, store, cfg.RunTimeout), nil
 	case runner.KindSystem:
 		systemCfg := system.FromEnv()
 		systemCfg.Endpoint = cfg.ForgejoURL
 		systemCfg.Token = cfg.RenovateToken
 		systemCfg.ExtraConfig = extraConfig
-		return &executor{backend: system.New(systemCfg), store: store, timeout: cfg.RunTimeout}, nil
+		return newExecutor(system.New(systemCfg), store, cfg.RunTimeout), nil
 	default:
 		return nil, fmt.Errorf("unsupported RUNNER %q, supported values: %q, %q",
 			cfg.Runner, runner.KindDocker, runner.KindSystem)

@@ -19,8 +19,11 @@ func (Run) Fields() []ent.Field {
 		field.String("trigger"),
 		field.Int("attempt"),
 		field.Time("started_at"),
-		field.Time("finished_at"),
-		field.Int("exit_code"),
+		field.Time("finished_at").
+			Optional().
+			Comment("unset while the run is still in progress"),
+		field.Int("exit_code").
+			Default(-1),
 		field.String("error").
 			Default(""),
 		field.Bytes("log").

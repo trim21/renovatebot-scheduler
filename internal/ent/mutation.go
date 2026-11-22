@@ -982,9 +982,22 @@ func (m *RunMutation) OldFinishedAt(ctx context.Context) (v time.Time, err error
 	return oldValue.FinishedAt, nil
 }
 
+// ClearFinishedAt clears the value of the "finished_at" field.
+func (m *RunMutation) ClearFinishedAt() {
+	m.finished_at = nil
+	m.clearedFields[run.FieldFinishedAt] = struct{}{}
+}
+
+// FinishedAtCleared returns if the "finished_at" field was cleared in this mutation.
+func (m *RunMutation) FinishedAtCleared() bool {
+	_, ok := m.clearedFields[run.FieldFinishedAt]
+	return ok
+}
+
 // ResetFinishedAt resets all changes to the "finished_at" field.
 func (m *RunMutation) ResetFinishedAt() {
 	m.finished_at = nil
+	delete(m.clearedFields, run.FieldFinishedAt)
 }
 
 // SetExitCode sets the "exit_code" field.
@@ -1358,6 +1371,9 @@ func (m *RunMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *RunMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(run.FieldFinishedAt) {
+		fields = append(fields, run.FieldFinishedAt)
+	}
 	if m.FieldCleared(run.FieldLog) {
 		fields = append(fields, run.FieldLog)
 	}
@@ -1375,6 +1391,9 @@ func (m *RunMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *RunMutation) ClearField(name string) error {
 	switch name {
+	case run.FieldFinishedAt:
+		m.ClearFinishedAt()
+		return nil
 	case run.FieldLog:
 		m.ClearLog()
 		return nil

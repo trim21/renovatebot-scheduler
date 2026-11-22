@@ -55,6 +55,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultExitCode holds the default value on creation for the "exit_code" field.
+	DefaultExitCode int
 	// DefaultError holds the default value on creation for the "error" field.
 	DefaultError string
 )

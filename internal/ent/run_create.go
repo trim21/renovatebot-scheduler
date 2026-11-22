@@ -50,9 +50,25 @@ func (_c *RunCreate) SetFinishedAt(v time.Time) *RunCreate {
 	return _c
 }
 
+// SetNillableFinishedAt sets the "finished_at" field if the given value is not nil.
+func (_c *RunCreate) SetNillableFinishedAt(v *time.Time) *RunCreate {
+	if v != nil {
+		_c.SetFinishedAt(*v)
+	}
+	return _c
+}
+
 // SetExitCode sets the "exit_code" field.
 func (_c *RunCreate) SetExitCode(v int) *RunCreate {
 	_c.mutation.SetExitCode(v)
+	return _c
+}
+
+// SetNillableExitCode sets the "exit_code" field if the given value is not nil.
+func (_c *RunCreate) SetNillableExitCode(v *int) *RunCreate {
+	if v != nil {
+		_c.SetExitCode(*v)
+	}
 	return _c
 }
 
@@ -117,6 +133,10 @@ func (_c *RunCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *RunCreate) defaults() {
+	if _, ok := _c.mutation.ExitCode(); !ok {
+		v := run.DefaultExitCode
+		_c.mutation.SetExitCode(v)
+	}
 	if _, ok := _c.mutation.Error(); !ok {
 		v := run.DefaultError
 		_c.mutation.SetError(v)
@@ -136,9 +156,6 @@ func (_c *RunCreate) check() error {
 	}
 	if _, ok := _c.mutation.StartedAt(); !ok {
 		return &ValidationError{Name: "started_at", err: errors.New(`ent: missing required field "Run.started_at"`)}
-	}
-	if _, ok := _c.mutation.FinishedAt(); !ok {
-		return &ValidationError{Name: "finished_at", err: errors.New(`ent: missing required field "Run.finished_at"`)}
 	}
 	if _, ok := _c.mutation.ExitCode(); !ok {
 		return &ValidationError{Name: "exit_code", err: errors.New(`ent: missing required field "Run.exit_code"`)}

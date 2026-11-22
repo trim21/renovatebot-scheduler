@@ -354,6 +354,16 @@ func FinishedAtLTE(v time.Time) predicate.Run {
 	return predicate.Run(sql.FieldLTE(FieldFinishedAt, v))
 }
 
+// FinishedAtIsNil applies the IsNil predicate on the "finished_at" field.
+func FinishedAtIsNil() predicate.Run {
+	return predicate.Run(sql.FieldIsNull(FieldFinishedAt))
+}
+
+// FinishedAtNotNil applies the NotNil predicate on the "finished_at" field.
+func FinishedAtNotNil() predicate.Run {
+	return predicate.Run(sql.FieldNotNull(FieldFinishedAt))
+}
+
 // ExitCodeEQ applies the EQ predicate on the "exit_code" field.
 func ExitCodeEQ(v int) predicate.Run {
 	return predicate.Run(sql.FieldEQ(FieldExitCode, v))

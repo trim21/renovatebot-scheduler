@@ -26,7 +26,7 @@ type Run struct {
 	Attempt int `json:"attempt,omitempty"`
 	// StartedAt holds the value of the "started_at" field.
 	StartedAt time.Time `json:"started_at,omitempty"`
-	// FinishedAt holds the value of the "finished_at" field.
+	// unset while the run is still in progress
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	// ExitCode holds the value of the "exit_code" field.
 	ExitCode int `json:"exit_code,omitempty"`
