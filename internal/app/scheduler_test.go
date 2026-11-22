@@ -139,3 +139,84 @@ func TestSchedulerIndependentRepositories(t *testing.T) {
 		}
 	}
 }
+
+// trackingRunner records how many runs overlap.
+type trackingRunner struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	runs      int
+	delay     time.Duration
+}
+
+func (r *trackingRunner) Run(ctx context.Context, req runner.RunRequest) runner.RunResult {
+	r.mu.Lock()
+	r.active++
+	r.runs++
+	if r.active > r.maxActive {
+		r.maxActive = r.active
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-time.After(r.delay):
+	case <-ctx.Done():
+	}
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+
+	return runner.RunResult{}
+}
+
+func (r *trackingRunner) stats() (runs, maxActive int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.runs, r.maxActive
+}
+
+func TestSchedulerNeverOverlapsRunsForSameRepo(t *testing.T) {
+	backend := &trackingRunner{delay: 60 * time.Millisecond}
+	// Global concurrency is deliberately above 1: the per-repository guarantee
+	// must not depend on it.
+	scheduler := NewScheduler(backend, 10*time.Millisecond, 4, 0, time.Millisecond)
+	defer scheduler.Stop(2 * time.Second)
+
+	scheduler.Enqueue("owner/repo", "push", true)
+	if !waitFor(t, 2*time.Second, func() bool { runs, _ := backend.stats(); return runs == 1 }) {
+		t.Fatal("first run did not start")
+	}
+
+	for i := 0; i < 5; i++ {
+		scheduler.Enqueue("owner/repo", "push", false)
+	}
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		runs, _ := backend.stats()
+		return runs >= 2 && scheduler.Status("owner/repo").State == WorkerStateIdle
+	}) {
+		runs, maxActive := backend.stats()
+		t.Fatalf("scheduler did not settle: %d runs, max %d, status %+v",
+			runs, maxActive, scheduler.Status("owner/repo"))
+	}
+
+	runs, maxActive := backend.stats()
+	if maxActive > 1 {
+		t.Fatalf("%d Renovate processes overlapped for one repository (%d runs)", maxActive, runs)
+	}
+}
+
+func TestSchedulerRunsDifferentReposConcurrently(t *testing.T) {
+	backend := &trackingRunner{delay: 200 * time.Millisecond}
+	scheduler := NewScheduler(backend, 10*time.Millisecond, 2, 0, time.Millisecond)
+	defer scheduler.Stop(2 * time.Second)
+
+	scheduler.Enqueue("owner/a", "push", true)
+	scheduler.Enqueue("owner/b", "push", true)
+
+	if !waitFor(t, 2*time.Second, func() bool { _, maxActive := backend.stats(); return maxActive >= 2 }) {
+		runs, maxActive := backend.stats()
+		t.Fatalf("different repositories did not run concurrently: %d runs, max %d", runs, maxActive)
+	}
+}
