@@ -79,6 +79,15 @@ func Run() error {
 	auth := NewAuth(cfg, forgejo)
 	server := NewServer(cfg, store, forgejo, auth, scheduler, botUser)
 
+	scheduleCtx, cancelSchedule := context.WithCancel(context.Background())
+	defer cancelSchedule()
+	if cfg.ScheduleInterval > 0 {
+		go runScheduleLoop(scheduleCtx, store, scheduler, cfg.ScheduleInterval, scheduleCheckInterval)
+		logger.Info().
+			Dur("interval", cfg.ScheduleInterval).
+			Msg("periodic runs enabled")
+	}
+
 	if cfg.StartupRun {
 		repos := store.List()
 		for _, repo := range repos {
@@ -124,6 +133,7 @@ func Run() error {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Warn().Err(err).Msg("http shutdown")
 	}
+	cancelSchedule()
 	scheduler.Stop(cfg.ShutdownTimeout)
 	return nil
 }

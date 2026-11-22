@@ -28,6 +28,9 @@ type Config struct {
 	RetryBackoff      time.Duration
 	Runner            runner.Kind
 	StartupRun        bool
+	// ScheduleInterval is the maximum time between runs of one repository.
+	// Zero disables periodic runs.
+	ScheduleInterval time.Duration
 }
 
 func (c *Config) secureCookies() bool {
@@ -97,6 +100,11 @@ func loadConfig() (*Config, error) {
 	}
 	if cfg.StartupRun, err = envBool("STARTUP_RUN", true); err != nil {
 		problems = append(problems, err.Error())
+	}
+	if cfg.ScheduleInterval, err = envDuration("SCHEDULE_INTERVAL", 24*time.Hour); err != nil {
+		problems = append(problems, err.Error())
+	} else if cfg.ScheduleInterval < 0 {
+		problems = append(problems, "SCHEDULE_INTERVAL must not be negative")
 	}
 
 	if len(problems) > 0 {

@@ -263,6 +263,22 @@ func (s *Store) UpdateRunLog(id string, log []byte) error {
 	return nil
 }
 
+// ReposRunSince returns the repositories with a run that started after t.
+func (s *Store) ReposRunSince(t time.Time) (map[string]struct{}, error) {
+	rows, err := s.client.Run.Query().
+		Select(run.FieldRepo).
+		Where(run.StartedAtGT(t)).
+		All(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("query recent runs: %w", err)
+	}
+	out := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		out[row.Repo] = struct{}{}
+	}
+	return out, nil
+}
+
 // ReadRunLog returns the last maxLines lines of a run log.
 func (s *Store) ReadRunLog(id string, maxLines int) (string, error) {
 	row, err := s.client.Run.Query().Select(run.FieldLog).Where(run.IDEQ(id)).Only(context.Background())

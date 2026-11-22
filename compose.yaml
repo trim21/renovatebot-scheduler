@@ -47,6 +47,10 @@ services:
       # waiting events queue another run instead of being dropped.
       CONCURRENCY: 1
 
+      # Run every enabled repository at least once per interval, regardless of
+      # events. Set to 0 to disable.
+      SCHEDULE_INTERVAL: 24h
+
       # Renovate container settings. Pin RENOVATE_IMAGE to a concrete version
       # instead of latest for reproducible runs.
       RENOVATE_IMAGE: ghcr.io/renovatebot/renovate:latest
