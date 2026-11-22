@@ -67,7 +67,7 @@ func TestConfigArchive(t *testing.T) {
 	if header.Name != "renovate-config.json" {
 		t.Fatalf("unexpected entry name: %q", header.Name)
 	}
-	if header.Mode != 0o600 {
+	if header.Mode != 0o644 {
 		t.Fatalf("unexpected mode: %o", header.Mode)
 	}
 

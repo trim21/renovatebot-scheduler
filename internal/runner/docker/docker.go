@@ -145,7 +145,11 @@ func configArchive(content []byte) ([]byte, error) {
 
 	header := &tar.Header{
 		Name: path.Base(containerConfigPath),
-		Mode: 0o600,
+		// CopyToContainer writes as root; the Renovate image runs as uid 1000,
+		// so a 0600 file would be unreadable and Renovate reports it as
+		// "Error parsing config file". World-readable is fine: the file lives
+		// only inside the short-lived container.
+		Mode: 0o644,
 		Size: int64(len(content)),
 	}
 	if err := writer.WriteHeader(header); err != nil {
