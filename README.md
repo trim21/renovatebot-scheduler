@@ -46,7 +46,8 @@ Forgejo ──webhook──▶ /webhook/{token} ──▶ signature ──▶ de
 | `pull_request_sync`, action `synchronized`, PR author is `BOT_USER` | yes |
 | any other `pull_request` / `pull_request_sync` event | no |
 | `issue_comment`, action `created`, body mentions `@<BOT_USER>` | yes |
-| `issues` | never (Renovate edits its own dashboard issue) |
+| `issues`, action `edited`, `changes.body` present, issue author is `BOT_USER` | yes (Dependency Dashboard checkbox click) |
+| any other `issues` event | no |
 | `ping` and everything else | no |
 | any event sent by `BOT_USER` | never |
 

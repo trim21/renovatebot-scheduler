@@ -244,7 +244,7 @@ func (s *Server) handleEnable(w http.ResponseWriter, r *http.Request) {
 	hook, err := s.forgejo.CreateHook(ctx, token, fullName, createHookOption{
 		Type:   "forgejo",
 		Active: true,
-		Events: []string{"push", "pull_request", "pull_request_sync", "issue_comment"},
+		Events: []string{"push", "pull_request", "pull_request_sync", "issue_comment", "issues"},
 		Config: map[string]string{
 			"url":          s.cfg.webhookURL(hookToken),
 			"content_type": "json",

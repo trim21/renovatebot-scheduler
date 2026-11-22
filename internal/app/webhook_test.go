@@ -133,12 +133,37 @@ func TestDecideTriggerIssueComment(t *testing.T) {
 	}
 }
 
-func TestDecideTriggerIgnoresIssues(t *testing.T) {
-	payload := &hookPayload{Action: "edited"}
-	payload.Sender.Login = "alice"
+func TestDecideTriggerIssues(t *testing.T) {
+	const bot = "renovate-bot"
+	issue := func(action, state, author, sender string, changes *hookChanges) *hookPayload {
+		p := &hookPayload{Action: action, Changes: changes, Issue: &hookIssue{State: state}}
+		p.Issue.User.Login = author
+		p.Sender.Login = sender
+		return p
+	}
+	bodyEdit := &hookChanges{Body: &hookChange{From: "old body"}}
 
-	if got := decideTrigger("issues", payload, "renovate-bot"); got.Trigger {
-		t.Fatalf("issue events must not trigger: %s", got.Reason)
+	cases := []struct {
+		name    string
+		payload *hookPayload
+		want    bool
+	}{
+		{"dashboard body edited by human", issue("edited", "open", bot, "alice", bodyEdit), true},
+		{"bot updates its own dashboard", issue("edited", "open", bot, bot, bodyEdit), false},
+		{"human issue body edited", issue("edited", "open", "alice", "alice", bodyEdit), false},
+		{"dashboard title edited", issue("edited", "open", bot, "alice", nil), false},
+		{"dashboard issue opened", issue("opened", "open", bot, "alice", nil), false},
+		{"closed dashboard body edited", issue("edited", "closed", bot, "alice", bodyEdit), false},
+		{"malformed payload", &hookPayload{Action: "edited", Changes: bodyEdit}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decideTrigger("issues", tc.payload, bot)
+			if got.Trigger != tc.want {
+				t.Fatalf("decideTrigger() = %v (%s), want %v", got.Trigger, got.Reason, tc.want)
+			}
+		})
 	}
 }
 

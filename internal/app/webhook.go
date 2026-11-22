@@ -23,6 +23,11 @@ type hookPullRequest struct {
 	User  hookUser `json:"user"`
 }
 
+type hookIssue struct {
+	State string   `json:"state"`
+	User  hookUser `json:"user"`
+}
+
 type hookComment struct {
 	Body string `json:"body"`
 }
@@ -48,6 +53,7 @@ type hookPayload struct {
 	Sender      hookUser         `json:"sender"`
 	PullRequest *hookPullRequest `json:"pull_request"`
 	Comment     *hookComment     `json:"comment"`
+	Issue       *hookIssue       `json:"issue"`
 	Changes     *hookChanges     `json:"changes"`
 }
 
@@ -64,7 +70,9 @@ type triggerDecision struct {
 // A pull request only triggers a run when its author is the bot and either
 // its body is edited (checking a checkbox, e.g. "rebase this PR") or its head
 // branch moved; PRs opened by other users are ignored, and base-branch pushes
-// arrive as push events anyway.
+// arrive as push events anyway. The Dependency Dashboard issue follows the same
+// rule: a body edit of a bot-authored issue (a checkbox click) triggers a run,
+// other issue events are ignored.
 func decideTrigger(event string, p *hookPayload, botUser string) triggerDecision {
 	if botUser != "" && strings.EqualFold(p.Sender.Login, botUser) {
 		return triggerDecision{Reason: "sender is the renovate bot"}
@@ -128,9 +136,26 @@ func decideTrigger(event string, p *hookPayload, botUser string) triggerDecision
 		return triggerDecision{Reason: "comment does not mention the bot"}
 
 	case "issues":
-		// Renovate edits its own dependency dashboard issue, so reacting to
-		// issue events would let a run trigger the next run.
-		return triggerDecision{Reason: "issue events are ignored"}
+		// The Dependency Dashboard is an issue authored by the bot. A body
+		// edit by a human (clicking a checkbox) asks Renovate to act; the
+		// bot's own dashboard updates are dropped above because it is the
+		// sender, so issue events cannot loop.
+		if p.Action != "edited" {
+			return triggerDecision{Reason: "issue action " + p.Action}
+		}
+		if p.Changes == nil || p.Changes.Body == nil {
+			return triggerDecision{Reason: "issue body was not changed"}
+		}
+		if p.Issue == nil {
+			return triggerDecision{Reason: "malformed issue payload"}
+		}
+		if p.Issue.State != "" && p.Issue.State != "open" {
+			return triggerDecision{Reason: "issue is " + p.Issue.State}
+		}
+		if !strings.EqualFold(p.Issue.User.Login, botUser) {
+			return triggerDecision{Reason: "issue author is " + p.Issue.User.Login}
+		}
+		return triggerDecision{Trigger: true, Reason: "dependency dashboard body edited"}
 
 	case "ping":
 		return triggerDecision{Reason: "ping"}
