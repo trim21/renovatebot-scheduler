@@ -13,7 +13,7 @@
 
 services:
   renovate-scheduler:
-    image: ghcr.io/trim21/renovatebot-scheduler:latest
+    image: ghcr.io/trim21/renovatebot-scheduler:master
     container_name: renovate-scheduler
     restart: unless-stopped
     ports:
