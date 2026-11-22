@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -28,6 +29,10 @@ const containerConfigPath = "/tmp/renovate-config.json"
 // defaultOwner is used when the image declares a USER that cannot be read as a
 // numeric uid, which is the common case for distribution images.
 const defaultOwner = "1000:1000"
+
+// logDrainTimeout bounds how long Run waits for the log stream to finish after
+// the container exited, so a stuck stream cannot block the run.
+const logDrainTimeout = 10 * time.Second
 
 // Runner runs every Renovate invocation in its own container through the
 // Docker Engine API. The scheduler itself is expected to run in a container
@@ -101,27 +106,74 @@ func (r *Runner) Run(ctx context.Context, req runner.RunRequest, log io.Writer) 
 		r.remove(created.ID, log)
 		return runner.RunResult{ExitCode: -1, Err: fmt.Errorf("start container: %w", err)}
 	}
+
+	// Stream logs while the container runs. Reading them only after the wait
+	// would keep the writer empty until the run finished, so a caller that
+	// persists output incrementally would see nothing until the very end.
+	logsDone := make(chan error, 1)
+	go func() {
+		logsDone <- r.streamLogs(ctx, created.ID, log)
+	}()
+
 	exitCode := -1
+	var waitErr error
 	wait := r.client.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{
 		Condition: container.WaitConditionNotRunning,
 	})
 	select {
 	case err := <-wait.Error:
 		if err != nil {
-			r.remove(created.ID, log)
-			return runner.RunResult{ExitCode: -1, Err: fmt.Errorf("wait for container: %w", err)}
+			waitErr = fmt.Errorf("wait for container: %w", err)
 		}
 	case resp := <-wait.Result:
 		exitCode = int(resp.StatusCode)
 	case <-ctx.Done():
-		r.remove(created.ID, log)
-		return runner.RunResult{ExitCode: -1, Err: fmt.Errorf("wait for container: %w", ctx.Err())}
+		waitErr = fmt.Errorf("wait for container: %w", ctx.Err())
 	}
 
-	r.copyLogs(created.ID, log)
+	if waitErr != nil {
+		// The container may still be running after a timeout, so stop it before
+		// draining the log stream.
+		r.remove(created.ID, log)
+	}
+
+	select {
+	case err := <-logsDone:
+		// A canceled context is expected when the run timed out; the timeout
+		// itself is already reported through waitErr.
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			_, _ = fmt.Fprintf(log, "# stream container logs: %v\n", err)
+		}
+	case <-time.After(logDrainTimeout):
+		_, _ = fmt.Fprintf(log, "# stream container logs: timed out draining output\n")
+	}
+
+	if waitErr != nil {
+		return runner.RunResult{ExitCode: -1, Err: waitErr}
+	}
+
 	r.remove(created.ID, log)
 
 	return runner.RunResult{ExitCode: exitCode}
+}
+
+// streamLogs copies the container's log stream into w until the container exits
+// or the context is canceled.
+func (r *Runner) streamLogs(ctx context.Context, id string, w io.Writer) error {
+	stream, err := r.client.ContainerLogs(ctx, id, client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
+	if err != nil {
+		return fmt.Errorf("read container logs: %w", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	if _, err := stdcopy.StdCopy(w, w, stream); err != nil {
+		return fmt.Errorf("demultiplex container logs: %w", err)
+	}
+	return nil
 }
 
 func containerConfig(cfg Config, req runner.RunRequest) *container.Config {
@@ -391,27 +443,6 @@ func (r *Runner) ensureImage(ctx context.Context, log io.Writer) error {
 		return fmt.Errorf("pull image %s: %w", r.cfg.Image, err)
 	}
 	return nil
-}
-
-// copyLogs reads the container output after it stopped. It uses its own context
-// because the run context may already be cancelled by a timeout.
-func (r *Runner) copyLogs(id string, w io.Writer) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	stream, err := r.client.ContainerLogs(ctx, id, client.ContainerLogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "# read container logs: %v\n", err)
-		return
-	}
-	defer func() { _ = stream.Close() }()
-
-	if _, err := stdcopy.StdCopy(w, w, stream); err != nil {
-		_, _ = fmt.Fprintf(w, "# demultiplex container logs: %v\n", err)
-	}
 }
 
 func (r *Runner) remove(id string, w io.Writer) {
