@@ -55,7 +55,7 @@ form { display: inline; }
 <tbody>
 {{range .Enabled}}
 <tr>
-<td><a href="/runs?repo={{.FullName}}"><code>{{.FullName}}</code></a>{{if .Missing}} <span class="muted">(not visible to your account)</span>{{end}}</td>
+<td><a href="/runs?repo={{.FullName}}"><code>{{.FullName}}</code></a></td>
 <td><span data-repo="{{.FullName}}" class="state-{{.Status.State}}">{{.Status.State}}</span></td>
 <td>{{if .Status.Trigger}}{{.Status.Trigger}}{{else}}<span class="muted">-</span>{{end}}</td>
 <td>{{if .Status.LastFinish.IsZero}}<span class="muted">-</span>{{else}}{{fmtTime .Status.LastFinish}}{{end}}</td>
@@ -69,35 +69,10 @@ form { display: inline; }
 </table>
 {{else}}<p class="muted">No repositories enabled yet.</p>{{end}}
 
-<h2>Available repositories</h2>
-<p><input type="search" id="filter" placeholder="Filter repositories" autocomplete="off"></p>
-<table id="other">
-<thead><tr><th>Repository</th><th>Default branch</th><th></th></tr></thead>
-<tbody>
-{{range .Other}}
-<tr>
-<td><code>{{.FullName}}</code></td>
-<td>{{.DefaultBranch}}</td>
-<td><form method="post" action="/repos/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="repo" value="{{.FullName}}"><button class="button">Enable</button></form></td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{if not .Other}}<p class="muted">No other repositories you administer.</p>{{end}}
+<p><a class="button" href="/repos">Browse repositories</a></p>
 
 <script>
 (function () {
-  var filter = document.getElementById('filter');
-  if (filter) {
-    filter.addEventListener('input', function () {
-      var needle = filter.value.toLowerCase();
-      var rows = document.querySelectorAll('#other tbody tr');
-      for (var i = 0; i < rows.length; i++) {
-        rows[i].style.display = rows[i].textContent.toLowerCase().indexOf(needle) >= 0 ? '' : 'none';
-      }
-    });
-  }
-
   async function poll() {
     try {
       var response = await fetch('/api/status', { headers: { accept: 'application/json' } });
@@ -116,6 +91,41 @@ form { display: inline; }
     } catch (e) {}
   }
   setInterval(poll, 5000);
+})();
+</script>
+{{template "foot" .}}{{end}}
+
+{{define "repos"}}{{template "head" .}}
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<h2>Available repositories</h2>
+<p><a href="/">Back to enabled repositories</a></p>
+<p><input type="search" id="filter" placeholder="Filter repositories" autocomplete="off"></p>
+{{if .Other}}
+<table id="other">
+<thead><tr><th>Repository</th><th>Default branch</th><th></th></tr></thead>
+<tbody>
+{{range .Other}}
+<tr>
+<td><code>{{.FullName}}</code></td>
+<td>{{.DefaultBranch}}</td>
+<td><form method="post" action="/repos/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="repo" value="{{.FullName}}"><button class="button">Enable</button></form></td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}<p class="muted">No other repositories you administer.</p>{{end}}
+
+<script>
+(function () {
+  var filter = document.getElementById('filter');
+  if (!filter) return;
+  filter.addEventListener('input', function () {
+    var needle = filter.value.toLowerCase();
+    var rows = document.querySelectorAll('#other tbody tr');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].style.display = rows[i].textContent.toLowerCase().indexOf(needle) >= 0 ? '' : 'none';
+    }
+  });
 })();
 </script>
 {{template "foot" .}}{{end}}

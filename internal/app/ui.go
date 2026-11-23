@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -39,6 +40,7 @@ func NewServer(cfg *Config, store *Store, forgejo *ForgejoClient, auth *Auth, sc
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /repos", s.handleRepos)
 	mux.HandleFunc("GET /login", s.auth.handleLogin)
 	mux.HandleFunc("GET /oauth/callback", s.auth.handleCallback)
 	mux.HandleFunc("POST /logout", s.auth.handleLogout)
@@ -71,7 +73,6 @@ var templateFuncs = template.FuncMap{
 type repoRow struct {
 	FullName      string
 	DefaultBranch string
-	Missing       bool
 	Status        RepoStatus
 }
 
@@ -122,60 +123,74 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{Login: sess.Login, CSRF: sess.CSRF}
-
-	tracked := s.store.List()
-	enabled := make(map[string]*TrackedRepo, len(tracked))
-	for _, repo := range tracked {
-		enabled[repo.FullName] = repo
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	seen := make(map[string]bool, len(tracked))
-	token, err := sess.accessToken(ctx, s.auth)
-	if err == nil {
-		var visible []ForgejoRepo
-		visible, err = s.forgejo.ListRepos(ctx, token)
-		if err == nil {
-			for _, repo := range visible {
-				seen[repo.FullName] = true
-				_, isEnabled := enabled[repo.FullName]
-				row := repoRow{
-					FullName:      repo.FullName,
-					DefaultBranch: repo.DefaultBranch,
-					Status:        s.sched.Status(repo.FullName),
-				}
-				if isEnabled {
-					data.Enabled = append(data.Enabled, row)
-				} else if repo.Permissions.Admin {
-					data.Other = append(data.Other, row)
-				}
-			}
-		}
-	}
-	// Tracked repositories stay visible even when the Forgejo API call failed
-	// or the account can no longer see them.
-	for _, repo := range tracked {
-		if !seen[repo.FullName] {
-			data.Enabled = append(data.Enabled, repoRow{
-				FullName:      repo.FullName,
-				DefaultBranch: repo.DefaultBranch,
-				Missing:       true,
-				Status:        s.sched.Status(repo.FullName),
-			})
-		}
+	for _, repo := range s.store.List() {
+		data.Enabled = append(data.Enabled, repoRow{
+			FullName:      repo.FullName,
+			DefaultBranch: repo.DefaultBranch,
+			Status:        s.sched.Status(repo.FullName),
+		})
 	}
 	sort.Slice(data.Enabled, func(i, j int) bool { return data.Enabled[i].FullName < data.Enabled[j].FullName })
 
-	if err != nil {
-		data.Error = "Could not list repositories: " + err.Error()
-		if strings.Contains(err.Error(), "401") {
-			data.Error = "Your Forgejo session expired. Log out and sign in again."
-		}
+	s.render(w, "index", data)
+}
+
+// handleRepos lists the repositories the signed-in user administers. It is a
+// separate page because it is the only view that calls Forgejo with the user's
+// OAuth token, and that call is slow for accounts with many repositories.
+func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
+		return
 	}
 
-	s.render(w, "index", data)
+	data := pageData{Login: sess.Login, CSRF: sess.CSRF}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	token, err := sess.accessToken(ctx, s.auth)
+	if errors.Is(err, errSessionExpired) {
+		s.logout(w, r)
+		return
+	}
+	if err != nil {
+		data.Error = "Could not authenticate with Forgejo: " + err.Error()
+		s.render(w, "repos", data)
+		return
+	}
+
+	visible, err := s.forgejo.ListRepos(ctx, token)
+	if err != nil {
+		data.Error = "Could not list repositories: " + err.Error()
+		s.render(w, "repos", data)
+		return
+	}
+
+	enabled := make(map[string]bool, len(data.Enabled))
+	for _, repo := range s.store.List() {
+		enabled[repo.FullName] = true
+	}
+	for _, repo := range visible {
+		if enabled[repo.FullName] || !repo.Permissions.Admin {
+			continue
+		}
+		data.Other = append(data.Other, repoRow{
+			FullName:      repo.FullName,
+			DefaultBranch: repo.DefaultBranch,
+		})
+	}
+
+	s.render(w, "repos", data)
+}
+
+// logout drops the session and its cookie, then sends the browser to /login.
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if sess := s.session(r); sess != nil {
+		s.auth.sessions.Delete(sess.ID)
+	}
+	s.auth.clearSessionCookie(w)
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (s *Server) formSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
@@ -210,6 +225,10 @@ func (s *Server) handleEnable(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	token, err := sess.accessToken(ctx, s.auth)
+	if errors.Is(err, errSessionExpired) {
+		s.logout(w, r)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -276,7 +295,7 @@ func (s *Server) handleEnable(w http.ResponseWriter, r *http.Request) {
 		Msg("repository enabled")
 	// Run once right away so onboarding PRs appear without waiting for an event.
 	s.sched.Enqueue(fullName, "enable", true)
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
 func (s *Server) removeManagedHooks(ctx context.Context, token, fullName string) error {

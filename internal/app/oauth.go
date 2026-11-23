@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,24 +37,65 @@ type Session struct {
 	CSRF    string
 	Expires time.Time
 
-	mu    sync.Mutex
-	Token *oauthToken
+	tokens *tokenStore
 }
 
+// errSessionExpired means the session's OAuth token can no longer be refreshed
+// and the user has to sign in again. Callers should drop the session cookie and
+// send the browser to /login.
+var errSessionExpired = errors.New("session expired, please sign in again")
+
 func (s *Session) accessToken(ctx context.Context, a *Auth) (string, error) {
+	token, err := s.tokens.AccessToken(ctx)
+	if errors.Is(err, errSessionExpired) {
+		a.sessions.Delete(s.ID)
+	}
+	return token, err
+}
+
+// tokenStore holds one session's OAuth token and refreshes it on demand.
+//
+// Refreshes are serialized because Forgejo rotates the refresh token on every
+// use: two concurrent refreshes would make the second one fail and permanently
+// break the session.
+type tokenStore struct {
+	auth *Auth
+
+	mu       sync.Mutex
+	token    *oauthToken
+	rejected bool
+}
+
+func newTokenStore(auth *Auth, token *oauthToken) *tokenStore {
+	return &tokenStore{auth: auth, token: token}
+}
+
+// AccessToken returns a usable access token, refreshing it when it is about to
+// expire. It returns errSessionExpired when the token cannot be refreshed.
+func (s *tokenStore) AccessToken(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Token.valid() {
-		return s.Token.AccessToken, nil
+
+	if s.rejected {
+		return "", errSessionExpired
 	}
-	if s.Token == nil || s.Token.RefreshToken == "" {
-		return "", errors.New("session expired, please log in again")
+	if s.token.valid() {
+		return s.token.AccessToken, nil
 	}
-	token, err := a.refreshToken(ctx, s.Token.RefreshToken)
+	if s.token == nil || s.token.RefreshToken == "" {
+		s.rejected = true
+		return "", errSessionExpired
+	}
+
+	token, err := s.auth.refreshToken(ctx, s.token.RefreshToken)
 	if err != nil {
-		return "", err
+		// A rejected refresh token cannot be retried: Forgejo already moved the
+		// grant to the next counter.
+		s.rejected = true
+		s.token = nil
+		return "", fmt.Errorf("%w: %v", errSessionExpired, err)
 	}
-	s.Token = token
+	s.token = token
 	return token.AccessToken, nil
 }
 
@@ -66,17 +108,25 @@ func NewSessionStore() *SessionStore {
 	return &SessionStore{m: make(map[string]*Session)}
 }
 
-func (s *SessionStore) Create(login string, token *oauthToken) *Session {
+func (s *SessionStore) Create(login string, tokens *tokenStore) *Session {
 	sess := &Session{
 		ID:      randomToken(24),
 		Login:   login,
 		CSRF:    randomToken(24),
 		Expires: time.Now().Add(24 * time.Hour),
-		Token:   token,
+		tokens:  tokens,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcLocked()
+	// Forgejo keeps one OAuth grant per user and application and rotates its
+	// refresh token on every use. Two live sessions of the same user would
+	// invalidate each other's refresh token, so a new login replaces them.
+	for id, existing := range s.m {
+		if strings.EqualFold(existing.Login, login) {
+			delete(s.m, id)
+		}
+	}
 	s.m[sess.ID] = sess
 	return sess
 }
@@ -170,6 +220,18 @@ func (a *Auth) tokenRequest(ctx context.Context, form url.Values) (*oauthToken, 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		var oauthErr struct {
+			Error       string `json:"error"`
+			Description string `json:"error_description"`
+		}
+		if err := json.Unmarshal(body, &oauthErr); err == nil && oauthErr.Error != "" {
+			detail := oauthErr.Description
+			if detail == "" {
+				detail = strings.TrimSpace(string(body))
+			}
+			return nil, fmt.Errorf("token request failed: %s (%s: %s)", resp.Status, oauthErr.Error, detail)
+		}
 		return nil, fmt.Errorf("token request failed: %s", resp.Status)
 	}
 	var token oauthToken
@@ -265,9 +327,16 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess := a.sessions.Create(login, token)
+	sess := a.sessions.Create(login, newTokenStore(a, token))
 	a.setSessionCookie(w, sess)
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (a *Auth) clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: "sid", Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: a.cfg.secureCookies(), SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -284,10 +353,7 @@ func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if sess != nil {
 		a.sessions.Delete(sess.ID)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: "sid", Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: a.cfg.secureCookies(), SameSite: http.SameSiteLaxMode,
-	})
+	a.clearSessionCookie(w)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
